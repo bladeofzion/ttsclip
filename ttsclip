@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+
+# Source your bashrc or profile
+source ~/.profile
+
+#!/usr/bin/env bash
+export LC_ALL=en_US.UTF-8  # Ensure proper handling of multibyte characters
+
+
+# Dependency check
+dependencies=("xclip" "jq" "curl" "ffmpeg" "ffplay" "sox" "iconv" "xdotool" "sed" "cut")
+
+missing=()  # Array to store missing dependencies
+
+for dep in "${dependencies[@]}"; do
+    if ! command -v "$dep" &>/dev/null; then
+        missing+=("$dep")
+    fi
+done
+
+if [ "${#missing[@]}" -ne 0 ]; then
+    echo "Error: The following dependencies are missing:"
+    for dep in "${missing[@]}"; do
+        echo "  sudo apt install $dep"
+    done
+    echo "Please install them."
+    exit 1
+else
+    echo "All dependencies are installed."
+fi
+
+
+
+# Get the clipboard content
+clipboard_content="$(xclip -selection clipboard -o)"
+
+if [ $? -ne 0 ]; then
+    echo "Error: Unable to retrieve clipboard content. Ensure a clipboard manager is running."
+    exit 2
+fi
+
+# Check if OPENAI_API_KEY is set
+if [ -z "$OPENAI_API_KEY" ]; then
+  echo "Error: OPENAI_API_KEY is not set."
+  exit 1
+fi
+
+# Check if clipboard content is empty
+if [ -z "$clipboard_content" ]; then
+  echo "Error: Clipboard is empty."
+  exit 1
+fi
+
+# Maximum allowed characters per request
+MAX_LENGTH=4096
+
+# Split the clipboard content into an array using line breaks as delimiters
+IFS=$'\n' read -d '' -r -a lines <<< "$clipboard_content"
+# echo -e '\n'
+
+# **Calculate Total Number of Chunks**
+total_chunks=0
+
+# First pass to count the total number of chunks
+for line in "${lines[@]}"; do
+  # Remove leading/trailing whitespace
+  line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+
+  # Skip empty lines
+  if [ -z "$line" ]; then
+    continue
+  fi
+
+  # Initialize position
+  start_pos=1
+
+  # Count chunks in this line
+  while [ "$start_pos" -le "${#line}" ]; do
+    total_chunks=$((total_chunks + 1))
+    start_pos=$((start_pos + MAX_LENGTH))
+  done
+done
+
+# Output total number of chunks
+echo "Total chunks to process: $total_chunks"
+echo -e '\n'
+
+# **Process Each Chunk with Indexing**
+chunk_index=1  # Initialize chunk counter
+
+# Process each line
+for line in "${lines[@]}"; do
+  # Remove leading/trailing whitespace
+  line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+
+  # Skip empty lines
+  if [ -z "$line" ]; then
+    continue
+  fi
+
+  # Initialize position
+  start_pos=1
+
+  # Process the line in chunks if it's longer than MAX_LENGTH
+  while [ "$start_pos" -le "${#line}" ]; do
+    # Extract a chunk up to MAX_LENGTH characters
+    chunk=$(echo "$line" | cut -c "$start_pos"-"$((start_pos + MAX_LENGTH - 1))")
+
+    # Ensure we don't cut off multibyte characters
+    # Remove incomplete characters at the end
+    chunk=$(echo "$chunk" | iconv -f UTF-8 -t UTF-8 -c)
+
+    # Build the JSON string using jq
+    jsonstr=$(jq -n --arg input "$chunk" '{
+      model: "tts-1-1106",
+      input: $input,
+      voice: "nova"
+    }')
+    # nova
+    # voice: "onyx"
+    # 
+
+    # **Echo the chunk with index**
+    echo -e "$chunk_index/$total_chunks| $chunk"
+    # echo -e "$chunk"
+    # echo -e '\n'
+
+    # Make the API call
+    curl -sS https://api.openai.com/v1/audio/speech     -H "Authorization: Bearer $OPENAI_API_KEY"     -H "Content-Type: application/json"     -d "$jsonstr" | ffplay -nodisp -autoexit -loglevel quiet -
+
+    # Make the API call and process the MP3 stream
+    # curl -sS https://api.openai.com/v1/audio/speech \
+    #     -H "Authorization: Bearer $OPENAI_API_KEY" \
+    #     -H "Content-Type: application/json" \
+    #     -d "$jsonstr" | \
+    #     ffmpeg -loglevel error -i pipe:0 -f wav - | \
+    #     sox --ignore-length -t wav - -t wav - \
+    #     reverb 0 \
+    #     bass +4 \
+    #     treble +2 \
+    #     overdrive 3 \
+    #     compand 0.8,1 6:-70,-60,-20 -20 -90 0.3 \
+    #     chorus 0.5 0.9 50 0.4 0.25 2 -t 60 0.32 0.4 2.3 -t 40 0.3 0.3 1.3 -s \
+    #     2>/dev/null | \
+    #     ffplay -autoexit -loglevel quiet -
+
+    # Update position for next chunk
+    start_pos=$((start_pos + MAX_LENGTH))
+    chunk_index=$((chunk_index + 1))  # Increment chunk counter
+  done
+done
+
+# xdotool getactivewindow windowclose
+

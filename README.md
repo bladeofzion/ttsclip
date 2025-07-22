@@ -34,7 +34,7 @@ sudo apt install xclip jq curl ffmpeg sox iconv xdotool sed coreutils
 ## Installation
 1. Clone or download this repo:  
    ```bash
-   git clone https://github.com/yourusername/ttsclip.git  # Replace with your repo URL
+   git clone https://github.com/bladeofzion/ttsclip.git # Replace with your repo URL
    cd ttsclip
    ```
 
